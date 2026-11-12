@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+
+Sitemap: https://bishop-of-souls.web.app/sitemap.xml
+Disallow: /dashboard.html

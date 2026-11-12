@@ -1,0 +1,44 @@
+{
+  "name": "Bishop of Souls Ministry",
+  "short_name": "Bishop of Souls",
+  "description": "Evangelism, prayer, discipleship, worship and missions in Ghana. Home of Joel Network Ministry.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#080c13",
+  "theme_color": "#080c13",
+  "lang": "en-GH",
+  "icons": [
+    {
+      "src": "/assets/img/logos/favicon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/img/logos/favicon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/img/logos/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Watch sermons",
+      "url": "/sermons"
+    },
+    {
+      "name": "Events",
+      "url": "/events"
+    },
+    {
+      "name": "Contact",
+      "url": "/contact"
+    }
+  ]
+}

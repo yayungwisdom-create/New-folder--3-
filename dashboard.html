@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staff Dashboard | Bishop of Souls Ministry</title>
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#142b4a">
+<link rel="icon" type="image/png" href="website-files/assets/img/logos/favicon-48.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Merriweather:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="website-files/css/style.css">
+<link rel="stylesheet" href="website-files/css/admin.css">
+<link rel="stylesheet" href="website-files/css/mobile-polish.css">
+</head>
+<body class="admin-body">
+
+
+<!-- Loading -->
+<div id="bootView" class="center-view"><div class="login-card text-center"><p id="bootText" style="font-weight:600">Loading the dashboard…</p><div id="bootHelp" role="alert"></div></div></div>
+
+<!-- Sign in -->
+<div id="loginView" class="center-view" hidden>
+  <div class="login-card">
+    <div class="text-center" style="margin-bottom:1.5rem">
+      <img src="website-files/assets/img/logos/logo-bishop-of-souls.png" alt="Bishop of Souls Ministries" width="140" height="99" style="margin:0 auto 1rem;height:auto">
+      <h1 style="font-size:1.4rem">Staff sign in</h1>
+      <p style="color:var(--muted);font-size:.93rem">Enter your email (or username) and password.</p>
+    </div>
+    <div id="loginMsg" role="alert" aria-live="polite"></div>
+    <form id="loginForm" novalidate>
+      <div class="form-group"><label for="adminEmail">Email or username</label><input id="adminEmail" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+      <div class="form-group"><label for="adminPassword">Password</label><input id="adminPassword" type="password" autocomplete="current-password" required></div>
+      <button class="btn btn-navy btn-block" type="submit" id="loginBtn">Sign in</button>
+    </form>
+    <p style="text-align:center;margin-top:1rem;font-size:.9rem"><button type="button" class="link-btn" id="resetBtn">Forgot your password?</button></p>
+    <p style="text-align:center;margin-top:.5rem;font-size:.9rem"><a href="index.html" style="text-decoration:underline;color:var(--muted)">← Back to website</a></p>
+  </div>
+</div>
+
+<!-- Signed in, no role yet -->
+<div id="pendingView" class="center-view" hidden>
+  <div class="login-card text-center">
+    <h1 style="font-size:1.3rem;margin-bottom:.75rem">Waiting for access</h1>
+    <p id="pendingText" style="color:var(--muted)">You are signed in, but a Super Administrator has not given you a role yet. Please contact them and share your sign-in email.</p>
+    <p class="meta" style="justify-content:center;margin:1rem 0" id="pendingMeta"></p>
+    <button type="button" class="btn btn-outline-dark" data-action="logout">Sign out</button>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="appView" class="admin-layout" hidden>
+  <header class="admin-topbar">
+    <button type="button" class="nav-toggle" id="adminMenuBtn" aria-expanded="false" aria-controls="adminSidebar" aria-label="Open menu"><span></span><span></span><span></span></button>
+    <strong>Staff Dashboard</strong>
+  </header>
+  <aside class="admin-sidebar" id="adminSidebar" aria-label="Dashboard navigation">
+    <div class="admin-brand"><span class="brand-chip"><img src="website-files/assets/img/logos/logo-bishop-of-souls.png" alt="" width="50" height="50"></span><p id="whoAmI" class="who"></p></div>
+    <nav id="adminNav" class="admin-nav"></nav>
+    <div class="admin-side-foot">
+      <a href="index.html" class="btn btn-outline btn-sm btn-block" target="_blank" rel="noopener">View website ↗</a>
+      <button type="button" class="btn btn-outline btn-sm btn-block" data-action="chpw">Change password</button>
+      <button type="button" class="btn btn-gold btn-sm btn-block" data-action="logout">Sign out</button>
+    </div>
+  </aside>
+  <div class="admin-scrim" id="adminScrim" hidden></div>
+  <div class="mode-banner" id="modeBanner" hidden role="status">💻 <b>Local mode.</b> Changes are saved in this browser only. <button type="button" class="link-btn" data-go="golive">Go live</button> to create your real login and show your content to everyone, on every device.</div>
+  <main class="admin-main" id="adminMain" tabindex="-1"></main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script defer src="website-files/js/admin.js"></script>
+</body>
+</html>
+
+
+
+

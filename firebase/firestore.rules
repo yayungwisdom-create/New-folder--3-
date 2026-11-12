@@ -1,0 +1,259 @@
+rules_version = '2';
+
+// =============================================================================
+//  Bishop of Souls Ministry — Firestore security rules
+//  Principle: DENY by default; allow only what is listed below.
+//
+//  Roles (stored in users/{uid}.role, changeable ONLY by a super_admin):
+//    super_admin  everything, including user roles
+//    admin        all content + inbox (messages, join requests), settings, audit log; can delete
+//    editor       create / edit / PUBLISH content; cannot delete or see inbox
+//    contributor  create / edit DRAFT content only; cannot publish
+//    pending      signed in but no access
+//  Visitors (not signed in) may: read PUBLISHED content, read siteSettings/general,
+//  and CREATE (never read) contact messages and join requests with strict validation.
+// =============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function profilePath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(profilePath()); }
+    function profile() { return get(profilePath()).data; }
+    function isActive() { return hasProfile() && profile().get('active', true) == true; }
+    function roleIn(roles) { return isActive() && profile().role in roles; }
+
+    function isSuper()  { return roleIn(['super_admin']); }
+    function isAdmin()  { return roleIn(['super_admin', 'admin']); }
+    function isEditor() { return roleIn(['super_admin', 'admin', 'editor']); }
+    function isStaff()  { return roleIn(['super_admin', 'admin', 'editor', 'contributor']); }
+
+    function optStr(d, k, max) { return !(k in d) || (d[k] is string && d[k].size() <= max); }
+    function optDate(d, k) { return !(k in d) || (d[k] is string && d[k].matches('^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$')); }
+    function reqStr(d, k, max) { return k in d && d[k] is string && d[k].size() > 0 && d[k].size() <= max; }
+
+    // Common bookkeeping fields on every managed content document.
+    function metaOk(d) {
+      return d.status in ['draft', 'published', 'archived']
+          && d.createdAt is timestamp && d.updatedAt is timestamp
+          && d.createdBy is string && d.updatedBy == request.auth.uid
+          && d.updatedAt == request.time;
+    }
+    // Who may create / update content (contributors: drafts only, cannot publish).
+    function mayCreate() { return isEditor() || (isStaff() && request.resource.data.status == 'draft'); }
+    function mayUpdate() {
+      return (isEditor() || (isStaff() && resource.data.status == 'draft' && request.resource.data.status == 'draft'))
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy;
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isSuper());
+      // A signed-in person may create ONLY their own PENDING profile (no access granted).
+      allow create: if signedIn() && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['email', 'role', 'active', 'createdAt'])
+                    && request.resource.data.role == 'pending'
+                    && request.resource.data.active == true
+                    && request.resource.data.email == request.auth.token.email
+                    && request.resource.data.createdAt == request.time;
+      // ONE-TIME FIRST ADMINISTRATOR. Allowed only while config/bootstrap does not exist yet, and only in the same
+      // batch that creates config/bootstrap (which itself requires the secret setup code below). After the first
+      // claim, config/bootstrap exists forever and this rule can never succeed again.
+      allow create: if signedIn() && request.auth.uid == uid
+                    && !exists(/databases/$(database)/documents/config/bootstrap)
+                    && getAfter(/databases/$(database)/documents/config/bootstrap).data.uid == request.auth.uid
+                    && request.resource.data.keys().hasOnly(['email', 'role', 'active', 'createdAt'])
+                    && request.resource.data.role == 'super_admin' && request.resource.data.active == true
+                    && request.resource.data.email == request.auth.token.email
+                    && request.resource.data.createdAt == request.time;
+      // A super admin may create the profile of a staff member they just added (the dashboard's "Add user").
+      allow create: if isSuper()
+                    && request.resource.data.keys().hasOnly(['email', 'role', 'active', 'createdAt'])
+                    && request.resource.data.role in ['contributor', 'editor', 'admin', 'super_admin']
+                    && request.resource.data.active == true && request.resource.data.email is string
+                    && request.resource.data.createdAt == request.time;
+      // Only a super admin may change roles. Nobody else can promote themselves.
+      allow update: if isSuper()
+                    && request.resource.data.keys().hasOnly(['email', 'role', 'active', 'createdAt', 'updatedAt'])
+                    && request.resource.data.role in ['pending', 'contributor', 'editor', 'admin', 'super_admin']
+                    && request.resource.data.active is bool
+                    && request.resource.data.email == resource.data.email;
+      allow delete: if isSuper();
+    }
+
+    // ---------- one-time "go live" marker ----------
+    // config/bootstrap is public: it only says "a real administrator exists yet" (so the dashboard knows whether the
+    // site is live). The secret setup code is checked HERE, in the rules, via config/bootstrapProof, which nobody can
+    // read. Both documents are created in ONE batch together with the first administrator's profile, and only while
+    // config/bootstrap does not exist. After that this can never succeed again.
+    match /config/{docId} {
+      allow read: if docId == 'bootstrap';
+      allow create: if signedIn() && !exists(/databases/$(database)/documents/config/bootstrap)
+                    && (
+                      (docId == 'bootstrapProof'
+                        && request.resource.data.keys().hasOnly(['uid', 'code', 'createdAt'])
+                        && request.resource.data.uid == request.auth.uid
+                        && request.resource.data.code == 'BISHOP-SETUP-2026'
+                        && request.resource.data.createdAt == request.time)
+                      ||
+                      (docId == 'bootstrap'
+                        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+                        && request.resource.data.uid == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/config/bootstrapProof).data.uid == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/config/bootstrapProof).data.code == 'BISHOP-SETUP-2026'
+                        && request.resource.data.createdAt == request.time)
+                    );
+      allow update, delete: if false;
+    }
+
+    // ---------- public content (read only when published) ----------
+    function validSermon(d) {
+      return d.keys().hasOnly(['title', 'speaker', 'scripture', 'description', 'category', 'date', 'videoUrl', 'videoId', 'thumbnailUrl',
+                               'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+          && reqStr(d, 'title', 200) && reqStr(d, 'videoUrl', 200)
+          && d.videoId is string && d.videoId.matches('^[A-Za-z0-9_-]{11}$')
+          && optStr(d, 'speaker', 120) && optStr(d, 'scripture', 200) && optStr(d, 'description', 2000)
+          && optStr(d, 'category', 60) && optStr(d, 'thumbnailUrl', 500) && optDate(d, 'date') && metaOk(d);
+    }
+    match /sermons/{id} {
+      allow read: if resource.data.status == 'published' || isStaff();
+      allow create: if mayCreate() && validSermon(request.resource.data) && request.resource.data.createdAt == request.time;
+      allow update: if mayUpdate() && validSermon(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    function validEvent(d) {
+      return d.keys().hasOnly(['title', 'category', 'date', 'endDate', 'time', 'venue', 'description', 'registrationUrl', 'posterUrl',
+                               'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+          && reqStr(d, 'title', 200) && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && optDate(d, 'endDate') && optStr(d, 'category', 60) && optStr(d, 'time', 80) && optStr(d, 'venue', 200)
+          && optStr(d, 'description', 2000) && optStr(d, 'registrationUrl', 500) && optStr(d, 'posterUrl', 500) && metaOk(d);
+    }
+    match /events/{id} {
+      allow read: if resource.data.status == 'published' || isStaff();
+      allow create: if mayCreate() && validEvent(request.resource.data) && request.resource.data.createdAt == request.time;
+      allow update: if mayUpdate() && validEvent(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    function validAnnouncement(d) {
+      return d.keys().hasOnly(['title', 'category', 'date', 'author', 'summary', 'body', 'imageUrl',
+                               'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+          && reqStr(d, 'title', 200) && optStr(d, 'category', 60) && optDate(d, 'date') && optStr(d, 'author', 120)
+          && optStr(d, 'summary', 500) && optStr(d, 'body', 10000) && optStr(d, 'imageUrl', 500) && metaOk(d);
+    }
+    match /announcements/{id} {
+      allow read: if resource.data.status == 'published' || isStaff();
+      allow create: if mayCreate() && validAnnouncement(request.resource.data) && request.resource.data.createdAt == request.time;
+      allow update: if mayUpdate() && validAnnouncement(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    function validTestimony(d) {
+      return d.keys().hasOnly(['name', 'context', 'quote', 'consent', 'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+          && reqStr(d, 'name', 120) && reqStr(d, 'quote', 1500) && optStr(d, 'context', 200)
+          && d.consent == true && metaOk(d);          // permission to publish must be confirmed
+    }
+    match /testimonies/{id} {
+      allow read: if resource.data.status == 'published' || isStaff();
+      allow create: if mayCreate() && validTestimony(request.resource.data) && request.resource.data.createdAt == request.time;
+      allow update: if mayUpdate() && validTestimony(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    function validGallery(d) {
+      return d.keys().hasOnly(['title', 'alt', 'category', 'imageData', 'imageUrl', 'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+          && reqStr(d, 'title', 150) && optStr(d, 'alt', 200) && optStr(d, 'imageUrl', 500)
+          && d.category in ['soe', 'schools', 'outreach', 'services', 'leadership', 'worship', 'prayer', 'gatherings', 'teaching']
+          && ((('imageData' in d) && d.imageData is string && d.imageData.size() > 0 && d.imageData.size() <= 450000)
+              || (('imageUrl' in d) && d.imageUrl is string && d.imageUrl.size() > 0))
+          && (!('imageData' in d) || (d.imageData is string && d.imageData.size() <= 450000)) && metaOk(d);
+    }
+    match /gallery/{id} {
+      allow read: if resource.data.status == 'published' || isStaff();
+      allow create: if mayCreate() && validGallery(request.resource.data) && request.resource.data.createdAt == request.time;
+      allow update: if mayUpdate() && validGallery(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Campus photos for the Joel Network page: one document per campus code, public to read, admin-only to change.
+    match /campusImages/{code} {
+      allow read: if true;
+      allow create, update: if isAdmin() && code in ['UCC', 'UEW', 'UHAS', 'ATU', 'HTU', 'UG']
+                    && request.resource.data.keys().hasOnly(['image', 'updatedAt', 'updatedBy'])
+                    && request.resource.data.image is string && request.resource.data.image.size() > 0 && request.resource.data.image.size() <= 300000
+                    && request.resource.data.updatedAt == request.time && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- public form submissions: create-only for visitors, never readable by them ----------
+    match /messages/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['name', 'email', 'phone', 'type', 'message', 'read', 'source', 'createdAt'])
+                    && request.resource.data.keys().hasAll(['name', 'email', 'type', 'message', 'read', 'createdAt'])
+                    && reqStr(request.resource.data, 'name', 100)
+                    && reqStr(request.resource.data, 'email', 200)
+                    && request.resource.data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$')
+                    && optStr(request.resource.data, 'phone', 30)
+                    && request.resource.data.type in ['General', 'School Booking', 'Campus Fellowship', 'Prayer Request', 'Partnership']
+                    && reqStr(request.resource.data, 'message', 2000)
+                    && request.resource.data.read == false
+                    && optStr(request.resource.data, 'source', 20)
+                    && request.resource.data.createdAt == request.time;
+      allow read, delete: if isAdmin();
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+                    && request.resource.data.read is bool;
+    }
+
+    match /registrations/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['fullName', 'email', 'phone', 'category', 'institution', 'fellowship',
+                                                             'ageGroup', 'guardianConsent', 'message', 'consent', 'status', 'createdAt'])
+                    && request.resource.data.keys().hasAll(['fullName', 'email', 'category', 'ageGroup', 'consent', 'status', 'createdAt'])
+                    && reqStr(request.resource.data, 'fullName', 100)
+                    && reqStr(request.resource.data, 'email', 200)
+                    && request.resource.data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$')
+                    && reqStr(request.resource.data, 'category', 60)
+                    && optStr(request.resource.data, 'phone', 30) && optStr(request.resource.data, 'institution', 150)
+                    && optStr(request.resource.data, 'message', 1000)
+                    && request.resource.data.fellowship in ['', 'UCC', 'UEW', 'UHAS', 'ATU', 'HTU', 'UG']
+                    && request.resource.data.ageGroup in ['under18', '18plus']
+                    && request.resource.data.guardianConsent is bool
+                    && (request.resource.data.ageGroup == '18plus' || request.resource.data.guardianConsent == true)
+                    && request.resource.data.consent == true
+                    && request.resource.data.status == 'pending'          // a request is never an automatic membership
+                    && request.resource.data.createdAt == request.time;
+      allow read, delete: if isAdmin();
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewedAt'])
+                    && request.resource.data.status in ['pending', 'approved', 'rejected']
+                    && request.resource.data.reviewedBy == request.auth.uid;
+    }
+
+    // ---------- site settings (only the 'general' document exists; public read so pages can show it) ----------
+    match /siteSettings/{docId} {
+      allow read: if docId == 'general';
+      allow create, update: if isAdmin() && docId == 'general'
+                    && request.resource.data.keys().hasOnly(['givingInfo', 'ytBishop', 'ytJoel', 'updatedAt', 'updatedBy'])
+                    && request.resource.data.givingInfo is string && request.resource.data.givingInfo.size() <= 3000
+                    && (!('ytBishop' in request.resource.data) || (request.resource.data.ytBishop is string && request.resource.data.ytBishop.matches('^$|^UC[A-Za-z0-9_-]{22}$')))
+                    && (!('ytJoel' in request.resource.data) || (request.resource.data.ytJoel is string && request.resource.data.ytJoel.matches('^$|^UC[A-Za-z0-9_-]{22}$')))
+                    && request.resource.data.updatedAt == request.time && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    // ---------- audit log: append-only ----------
+    match /auditLogs/{id} {
+      allow create: if isStaff()
+                    && request.resource.data.keys().hasOnly(['uid', 'email', 'action', 'collection', 'docId', 'title', 'at'])
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.at == request.time
+                    && request.resource.data.action is string && request.resource.data.action.size() <= 40
+                    && request.resource.data.title is string && request.resource.data.title.size() <= 200;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Everything not matched above is denied by default.
+  }
+}
